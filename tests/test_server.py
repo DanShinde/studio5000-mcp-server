@@ -637,3 +637,73 @@ class TestAOISchemaRegression:
         aoi_refs = [r for r in result if r.get("aoi") == "Valve_Control"]
         assert len(aoi_refs) == 1
         assert "XIC(Open)" in aoi_refs[0]["context"]
+
+
+# ── Rung Comment Element Form ───────────────────────────────
+
+
+class TestRungCommentElement:
+    """Studio 5000 exports write rung comments as a <Comment> child element
+    (CDATA), not as a Comment="..." attribute. Projects with several
+    documentation languages wrap the text in <LocalizedComment> elements.
+    """
+
+    EXPORT_L5X = """<?xml version="1.0" encoding="UTF-8"?>
+<RSLogix5000Content SchemaRevision="1.0" TargetName="CommentController">
+  <Controller Name="CommentController" ProcessorType="1756-L83E" MajorRev="33" MinorRev="1">
+    <Programs>
+      <Program Name="MainProgram">
+        <Routines>
+          <Routine Name="MainRoutine" Type="RLL">
+            <RLLContent>
+              <Rung Number="0" Type="N">
+                <Comment>
+<![CDATA[Start/stop seal-in]]>
+                </Comment>
+                <Text>
+<![CDATA[XIC(Start)OTE(Run);]]>
+                </Text>
+              </Rung>
+              <Rung Number="1" Type="N">
+                <Comment>
+                  <LocalizedComment Lang="en-US">
+<![CDATA[Run lamp]]>
+                  </LocalizedComment>
+                  <LocalizedComment Lang="de-DE">
+<![CDATA[Betriebsleuchte]]>
+                  </LocalizedComment>
+                </Comment>
+                <Text>
+<![CDATA[XIC(Run)OTE(RunLamp);]]>
+                </Text>
+              </Rung>
+              <Rung Number="2" Type="N">
+                <Text>
+<![CDATA[NOP();]]>
+                </Text>
+              </Rung>
+            </RLLContent>
+          </Routine>
+        </Routines>
+      </Program>
+    </Programs>
+  </Controller>
+</RSLogix5000Content>
+"""
+
+    @pytest.fixture
+    def rungs(self, tmp_path):
+        f = tmp_path / "comments.l5x"
+        f.write_text(self.EXPORT_L5X, encoding="utf-8")
+        proj = load_l5x(str(f))
+        return routines.get_routine(proj, "MainProgram", "MainRoutine")["rungs"]
+
+    def test_comment_child_element(self, rungs):
+        assert rungs[0]["comment"] == "Start/stop seal-in"
+        assert rungs[0]["text"] == "XIC(Start)OTE(Run);"
+
+    def test_localized_comment_uses_first_language(self, rungs):
+        assert rungs[1]["comment"] == "Run lamp"
+
+    def test_rung_without_comment(self, rungs):
+        assert "comment" not in rungs[2]

@@ -75,13 +75,34 @@ def _parse_rll(routine: Element) -> list[dict[str, Any]]:
     rungs = []
     for rung in routine.findall("RLLContent/Rung"):
         entry: dict[str, Any] = {"number": int(rung.get("Number", "0"))}
-        comment = rung.get("Comment", "")
+        comment = _rung_comment(rung)
         if comment:
             entry["comment"] = comment
         text_el = rung.find("Text")
         entry["text"] = text_el.text.strip() if text_el is not None and text_el.text else ""
         rungs.append(entry)
     return rungs
+
+
+def _rung_comment(rung: Element) -> str:
+    """Get a rung comment from either the attribute or the child element form.
+
+    Studio 5000 exports write rung comments as a <Comment><![CDATA[...]]></Comment>
+    child element. Projects with multiple documentation languages nest the text in
+    <LocalizedComment Lang="..."> elements instead; the first non-empty one is used.
+    """
+    comment = rung.get("Comment", "")
+    if comment:
+        return comment
+    comment_el = rung.find("Comment")
+    if comment_el is None:
+        return ""
+    if comment_el.text and comment_el.text.strip():
+        return comment_el.text.strip()
+    for localized in comment_el.findall("LocalizedComment"):
+        if localized.text and localized.text.strip():
+            return localized.text.strip()
+    return ""
 
 
 def _parse_st(routine: Element) -> str:

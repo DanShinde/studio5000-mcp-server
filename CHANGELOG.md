@@ -1,5 +1,10 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+- **Rung comments** — ladder rung comments are now read from the `<Comment>` child element (CDATA) that Studio 5000 exports write, including `<LocalizedComment>` text in multi-language projects. Previously only a `Comment="..."` attribute was read, so comments from real exports were dropped.
+
 ## [0.4.0] - 2026-04-12
 
 ### Added
