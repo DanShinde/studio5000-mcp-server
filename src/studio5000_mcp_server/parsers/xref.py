@@ -21,6 +21,10 @@ def build_xref(project: L5XProject) -> dict[str, list[dict[str, Any]]]:
         return _xref_cache[key]
 
     index: dict[str, list[dict[str, Any]]] = {}
+    aoi_names = frozenset(
+        aoi.get("Name", "")
+        for aoi in project.controller.findall("AddOnInstructionDefinitions/AddOnInstructionDefinition")
+    )
 
     # Scan program routines
     for prog in project.controller.findall("Programs/Program"):
@@ -35,7 +39,7 @@ def build_xref(project: L5XProject) -> dict[str, list[dict[str, Any]]]:
                     if not text:
                         continue
                     rung_num = int(rung.get("Number", "0"))
-                    for sym in _extract_symbols(text):
+                    for sym in _extract_symbols(text, aoi_names):
                         index.setdefault(sym, []).append({
                             "program": prog_name, "routine": rname,
                             "rung": rung_num, "context": text,
@@ -66,7 +70,7 @@ def build_xref(project: L5XProject) -> dict[str, list[dict[str, Any]]]:
                     if not text:
                         continue
                     rung_num = int(rung.get("Number", "0"))
-                    for sym in _extract_symbols(text):
+                    for sym in _extract_symbols(text, aoi_names):
                         index.setdefault(sym, []).append({
                             "aoi": aoi_name, "routine": rname,
                             "rung": rung_num, "context": text,
@@ -93,28 +97,41 @@ def search_xref(project: L5XProject, pattern: str) -> list[dict[str, Any]]:
     return results
 
 
-# NeutralText symbol extraction: match identifiers inside instructions
-# e.g. XIC(Motor_1.Running) → "Motor_1.Running", "Motor_1"
-_NT_SYMBOL_RE = re.compile(r'[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*')
-_NT_INSTRUCTIONS = {"XIC", "XIO", "OTE", "OTL", "OTU", "TON", "TOF", "RTO", "CTU", "CTD",
-                     "RES", "MOV", "ADD", "SUB", "MUL", "DIV", "NEG", "CMP", "EQU", "NEQ",
-                     "GRT", "GEQ", "LES", "LEQ", "JSR", "RET", "SBR", "AFI", "NOP", "MSG",
-                     "GSV", "SSV", "COP", "FLL", "CLR", "BTD", "SWPB", "SIZE"}
+# NeutralText operand extraction.
+# A tag operand is a name, optionally qualified by module path segments
+# (Local:1:I), followed by any number of member (.Member, .0 for bits) and
+# array index ([3], [Idx], [1,2]) parts, e.g. Local:1:I.Data.0 or Recipe[Step].Speed.
+_NT_OPERAND_RE = re.compile(
+    r'[A-Za-z_][A-Za-z0-9_]*'      # tag name
+    r'(?::[A-Za-z0-9_]+)*'         # module path segments
+    r'(?:\.[A-Za-z0-9_]+|\[[^\[\]]*\])*'  # members, bits and array indexes
+)
+_NT_BASE_RE = re.compile(r'[^.\[]+')
 
 
-def _extract_symbols(neutral_text: str) -> set[str]:
-    """Extract tag/symbol references from NeutralText."""
+def _extract_symbols(neutral_text: str, aoi_names: frozenset[str] = frozenset()) -> set[str]:
+    """Extract tag/symbol references from NeutralText.
+
+    Any name directly followed by "(" is an instruction call (XIC, ONS, CPT, JMP,
+    an AOI, ...). Built-in instructions are skipped; calls to AOIs named in
+    ``aoi_names`` are indexed so AOI usages can be searched.
+    """
     symbols: set[str] = set()
-    for match in _NT_SYMBOL_RE.finditer(neutral_text):
+    for match in _NT_OPERAND_RE.finditer(neutral_text):
         token = match.group()
-        # Skip instruction mnemonics
-        base = token.split(".")[0]
-        if base.upper() in _NT_INSTRUCTIONS:
+        rest = neutral_text[match.end():].lstrip()
+        if rest.startswith("("):
+            if token in aoi_names:
+                symbols.add(token)
             continue
         symbols.add(token)
-        # Also index the base tag if it's a dotted reference
-        if "." in token:
+        # Also index the base tag of a member, bit, or array reference
+        base = _NT_BASE_RE.match(token).group()
+        if base != token:
             symbols.add(base)
+        # Index tags used as indirect array indexes, e.g. Idx in Recipe[Idx]
+        for index_expr in re.findall(r'\[([^\[\]]*)\]', token):
+            symbols |= _extract_symbols(index_expr, aoi_names)
     return symbols
 
 

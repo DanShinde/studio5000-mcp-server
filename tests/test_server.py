@@ -637,3 +637,36 @@ class TestAOISchemaRegression:
         aoi_refs = [r for r in result if r.get("aoi") == "Valve_Control"]
         assert len(aoi_refs) == 1
         assert "XIC(Open)" in aoi_refs[0]["context"]
+
+
+# ── NeutralText Operand Extraction ──────────────────────────
+
+
+class TestNeutralTextOperands:
+    """Cross-reference parsing of operand shapes found in real ladder logic."""
+
+    def test_module_io_tag_kept_whole(self):
+        syms = xref._extract_symbols("XIC(Local:1:I.Data.0)OTE(Lamp);")
+        assert "Local:1:I.Data.0" in syms
+        assert "Local:1:I" in syms
+        assert "I" not in syms and "I.Data" not in syms and "Local" not in syms
+
+    def test_array_member_kept_whole(self):
+        syms = xref._extract_symbols("OTE(Out[3].Run);")
+        assert "Out[3].Run" in syms
+        assert "Out" in syms
+        assert "Run" not in syms
+
+    def test_indirect_array_index_indexed(self):
+        syms = xref._extract_symbols("MOV(Recipe[Step].Speed,SpeedRef);")
+        assert {"Recipe[Step].Speed", "Recipe", "Step", "SpeedRef"} <= syms
+        assert "Speed" not in syms
+
+    def test_builtin_instructions_not_indexed(self):
+        syms = xref._extract_symbols("XIC(A)ONS(Ons_1)CPT(Out,In*2)JMP(Lbl_1);")
+        assert not {"ONS", "CPT", "JMP", "XIC"} & syms
+        assert {"A", "Ons_1", "Out", "In"} <= syms
+
+    def test_aoi_call_indexed_when_known(self):
+        syms = xref._extract_symbols("Valve_Control(V1,Cmd);", frozenset({"Valve_Control"}))
+        assert {"Valve_Control", "V1", "Cmd"} <= syms
